@@ -1,0 +1,575 @@
+{
+  "name": "AI ATS Screening",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Job Application",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Full Name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Email",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Position",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Process Engineer"
+                  },
+                  {
+                    "option": "Accountant"
+                  },
+                  {
+                    "option": "Field Operator"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Resume",
+              "fieldType": "file",
+              "acceptFileTypes": ".pdf",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        -320,
+        -64
+      ],
+      "id": "256a9bd6-6cbf-45d2-b962-88711526ff74",
+      "name": "On form submission",
+      "webhookId": "5da8e84f-9f24-40a4-917e-e7fce5a38ef4"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "Resume",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.2,
+      "position": [
+        -80,
+        -64
+      ],
+      "id": "c22921f7-a923-4101-9941-9a8d08ba5ff3",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "18odYNTbPZChICihJc4U9VWNEneogptLz3HL2_6w2IRc",
+          "mode": "list",
+          "cachedResultName": "ATS Screening",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18odYNTbPZChICihJc4U9VWNEneogptLz3HL2_6w2IRc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Jobs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18odYNTbPZChICihJc4U9VWNEneogptLz3HL2_6w2IRc/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Position",
+              "lookupValue": "={{ $('On form submission').item.json.Position }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        144,
+        -64
+      ],
+      "id": "65f122f5-f1cb-48de-b220-c608de74f8e8",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "aYooExhHeEQOXDME",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const job = $input.first().json;\nconst cv  = $('Extract from File').first().json.text || '';\nconst app = $('On form submission').first().json;\nconst jd  = job['Job Description'] || job.JobDescription || '';\n\nconst prompt = `You are an expert technical recruiter acting as an Applicant Tracking System.\n\nJOB TITLE: ${job.Position}\nJOB DESCRIPTION AND REQUIREMENTS:\n${jd}\n\nCANDIDATE: ${app['Full Name']}\nRESUME TEXT:\n${cv.slice(0, 15000)}\n\nScore the candidate against the job. Be strict and evidence-based: only credit skills and experience actually stated in the resume.\nReply ONLY with JSON in this exact shape:\n{\n  \"score\": <integer 0-100>,\n  \"recommendation\": \"Interview\" | \"Maybe\" | \"Reject\",\n  \"experience_years\": <number>,\n  \"matched_skills\": [string],\n  \"missing_skills\": [string],\n  \"red_flags\": [string],\n  \"summary\": <2-3 sentence justification for HR>\n}\nRules: score >= 70 means Interview, 50-69 Maybe, below 50 Reject.`;\n\nreturn [{ json: { prompt } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        352,
+        -64
+      ],
+      "id": "db40691e-af5e-4721-be67-ec73a7bf8a30",
+      "name": "Build Prompt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  contents: [{ parts: [{ text: $json.prompt }] }],\n  generationConfig: { response_mime_type: \"application/json\", temperature: 0.1 }\n}) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        576,
+        -64
+      ],
+      "id": "b5955d8c-eed7-4825-b56e-97a6328aa93d",
+      "name": "Gemini Screen CV",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "W38WETF6TGvoHCXP",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nconst r = JSON.parse(raw.replace(/```json|```/g, '').trim());\nconst app = $('On form submission').first().json;\nconst now = $now.setZone('Africa/Lagos');\n\nreturn [{ json: {\n  Date: now.toFormat('yyyy-LL-dd HH:mm'),\n  Name: app['Full Name'],\n  Email: app.Email,\n  Position: app.Position,\n  Score: Number(r.score) || 0,\n  Recommendation: r.recommendation,\n  ExperienceYears: Number(r.experience_years) || 0,\n  MatchedSkills: (r.matched_skills || []).join(', '),\n  MissingSkills: (r.missing_skills || []).join(', '),\n  RedFlags: (r.red_flags || []).join(', '),\n  Summary: r.summary || ''\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        -64
+      ],
+      "id": "5b1d8a18-bc51-4fa6-a27d-f3e82e146b15",
+      "name": "Parse Screening"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "18odYNTbPZChICihJc4U9VWNEneogptLz3HL2_6w2IRc",
+          "mode": "list",
+          "cachedResultName": "ATS Screening",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18odYNTbPZChICihJc4U9VWNEneogptLz3HL2_6w2IRc/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 522608029,
+          "mode": "list",
+          "cachedResultName": "Candidates",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18odYNTbPZChICihJc4U9VWNEneogptLz3HL2_6w2IRc/edit#gid=522608029"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Posiiton",
+              "displayName": "Posiiton",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Recommendation",
+              "displayName": "Recommendation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "ExperienceYears",
+              "displayName": "ExperienceYears",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "MatchedSkills",
+              "displayName": "MatchedSkills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "MissingSkills",
+              "displayName": "MissingSkills",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Redflags",
+              "displayName": "Redflags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Sumarry",
+              "displayName": "Sumarry",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Position",
+              "displayName": "Position",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "RedFlags",
+              "displayName": "RedFlags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1040,
+        -64
+      ],
+      "id": "fd06cb5e-c44f-48ad-9b49-60fdae7b4d47",
+      "name": "Save To Candidates",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "aYooExhHeEQOXDME",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "judeadornis@gmail.com",
+        "subject": "=[ATS] {{ $json.Recommendation }} — {{ $json.Name }} for {{ $json.Position }} ({{ $json.Score }}/100)",
+        "emailType": "text",
+        "message": "=Candidate: {{ $json.Name }} <{{ $json.Email }}>\nPosition: {{ $json.Position }}\nScore: {{ $json.Score }}/100\nRecommendation: {{ $json.Recommendation }}\nExperience: {{ $json.ExperienceYears }} years\n\nMatched skills: {{ $json.MatchedSkills }}\nMissing skills: {{ $json.MissingSkills }}\nRed flags: {{ $json.RedFlags || 'None' }}\n\nSummary:\n{{ $json.Summary }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1264,
+        -64
+      ],
+      "id": "64347755-3cb5-48d8-8c24-12f8e3d0f7d9",
+      "name": "Send a message",
+      "webhookId": "84957c74-8d3b-48f8-8764-940836919049",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "f906573a-ec48-4e6f-861e-af16a360ba13",
+              "leftValue": "={{ $('Parse Screening').item.json.Score }}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        1488,
+        -64
+      ],
+      "id": "30312cc9-6c19-47bf-b636-0481a97ea9ed",
+      "name": "Shortlisted?"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse Screening').item.json.Email }}",
+        "subject": "=Your application for {{ $('Parse Screening').item.json.Position }} — next steps",
+        "emailType": "text",
+        "message": "=Dear {{ $('Parse Screening').item.json.Name }},\n\nThank you for your interest in the {{ $('Parse Screening').item.json.Position }} role. We have received your application and it is under review. We will be in touch if your profile is selected for the next stage.\n\nBest regards,\nRecruitment Team",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1712,
+        32
+      ],
+      "id": "be1e3e2e-68d4-4770-a8ec-00d1d1d5abdc",
+      "name": "Nont Successfull",
+      "webhookId": "ca95976d-d243-4b4b-b86b-b0f50e7017b1",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Parse Screening').item.json.Email }}",
+        "subject": "=Your application for {{ $('Parse Screening').item.json.Position }} — next steps",
+        "emailType": "text",
+        "message": "=Dear {{ $('Parse Screening').item.json.Name }},\n\nThank you for applying for the {{ $('Parse Screening').item.json.Position }} role. Your profile is a strong match and we would like to invite you to the interview stage. Our HR team will contact you shortly with available dates.\n\nBest regards,\nRecruitment Team",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1744,
+        -176
+      ],
+      "id": "4d527850-4599-4351-bd9c-3c9fb06712e7",
+      "name": "Successful. Invite Candidate",
+      "webhookId": "aaef60d1-2850-4180-8f1a-f671feadbdac",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "Gemini Screen CV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Screen CV": {
+      "main": [
+        [
+          {
+            "node": "Parse Screening",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Screening": {
+      "main": [
+        [
+          {
+            "node": "Save To Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save To Candidates": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Shortlisted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Shortlisted?": {
+      "main": [
+        [
+          {
+            "node": "Successful. Invite Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nont Successfull",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "39b4dfd1-45cf-43c5-89b8-60c1d769e990",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fe2004ab03178e55ac26497659754349c9e7d5ac4c3926e3adaad94f67783817"
+  },
+  "nodeGroups": [],
+  "id": "8YoE4bichNNf5Gtm",
+  "tags": []
+}
