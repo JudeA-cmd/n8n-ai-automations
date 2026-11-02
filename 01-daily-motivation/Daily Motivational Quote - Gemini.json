@@ -1,0 +1,162 @@
+{
+  "name": "Daily Motivational Quote - Gemini",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "6b547160-028c-47a1-ac94-3ad093598a01",
+      "name": "Every Day 7AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.8-flash",
+          "mode": "list",
+          "cachedResultName": "Gemini 3.8 Flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Write one unique, inspiring, professional motivational quote for a general workplace audience, under 30 words. Reply with ONLY the quote — no quotation marks, no author, no preamble. Today is {{ $now.format('cccc, d LLLL yyyy') }}. Theme: {{ ['resilience','focus','growth','teamwork','courage','discipline','gratitude','curiosity','patience','leadership'][Math.floor(Math.random()*10)] }}."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c51f354a-17fb-4bfd-a2f6-c3a0610d6c60",
+      "name": "Generate Quote",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "W38WETF6TGvoHCXP",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1wAhADiR2ZGS1MmRvI42yJH-1L5JlhSIHoxHXDmqpRdo",
+          "mode": "list",
+          "cachedResultName": "Motivation Recipients",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1wAhADiR2ZGS1MmRvI42yJH-1L5JlhSIHoxHXDmqpRdo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Recipients",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "ac3efd40-3ffe-44ac-bf88-035cf9c9dc7e",
+      "name": "Get Recipients",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        528,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "aYooExhHeEQOXDME",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.Email }}",
+        "subject": "Your Daily Dose of Motivation",
+        "emailType": "text",
+        "message": "=Good morning {{ $json.Name }},\n\nHere is your motivational quote for {{ $now.format('cccc, d LLLL yyyy') }}:\n\n\"{{ $('Generate Quote').first().json.content.parts[0].text.trim() }}\"\n\nHave a great day.\n\n— Daily Motivation Bot",
+        "options": {}
+      },
+      "id": "ec7c3b4b-429f-44cb-9304-61b8c4bc1ba2",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        784,
+        0
+      ],
+      "webhookId": "77e0196d-a6e4-461a-b626-ab16d48f0a7c",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every Day 7AM": {
+      "main": [
+        [
+          {
+            "node": "Generate Quote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Quote": {
+      "main": [
+        [
+          {
+            "node": "Get Recipients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Recipients": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "versionId": "880d41f5-ed3a-47c9-ac42-5c500d65061b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fe2004ab03178e55ac26497659754349c9e7d5ac4c3926e3adaad94f67783817"
+  },
+  "nodeGroups": [],
+  "id": "nyQZvQg7LFiKOofG",
+  "tags": []
+}
