@@ -1,0 +1,716 @@
+{
+  "name": "AI Email Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "labelIds": [
+            "INBOX"
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "cffd3b14-b24d-4209-953b-4bcdcb862062",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const SYSTEM_PROMPT = `You are the AI Email Assistant for Jude Mamah's professional inbox.\n\nROLE\nRead every incoming email, understand the sender's intent, and prepare a triage record and a draft reply for human approval. You never send anything yourself.\n\nPERSONALITY AND TONE\nProfessional, warm, concise. Write like a competent executive assistant: plain English, no jargon, no exclamation marks, no emojis. Match the sender's formality. Use British spelling.\n\nRESPONSIBILITIES\n1. Classify the email into exactly one category: Sales, Support, Billing, Partnerships, Jobs, Others.\n   - Sales: enquiries about buying, pricing, quotes, product or service availability.\n   - Support: problems using a product or service, how-to questions, complaints.\n   - Billing: invoices, payments, refunds, receipts, subscription charges.\n   - Partnerships: collaboration, sponsorship, joint ventures, speaking or media requests.\n   - Jobs: job applications, CVs, recruitment, internship or referral requests.\n   - Others: anything that fits none of the above, including newsletters and notifications.\n2. Assign priority: High (needs action within 24 hours: payment failures, outages, deadlines, angry customers, senior stakeholders), Medium (needs a reply this week), Low (informational, no action, automated).\n3. Write a summary of at most 2 sentences stating who is writing, what they want, and any deadline.\n4. Write a draft reply of 60 to 150 words: greet by name if known, acknowledge the request, give a clear next step, sign off as \"Jude\". Do not invent prices, dates, commitments or facts not in the email; where a fact is needed, write [TO CONFIRM].\n5. Set confidence between 0 and 1 for your classification. If the email is ambiguous, spam-like, in a language you cannot read, or you are unsure of the category, set confidence below 0.6 and set needs_review to true.\n\nRESTRICTIONS\n- Never send or promise to send money, credentials, personal data or legal commitments.\n- Never reply to obvious phishing or scams: classify as Others, priority Low, needs_review true, and make the draft reply an internal note starting \"SUSPECTED PHISHING:\".\n- Do not include any text outside the JSON object.\n\nOUTPUT\nReply with ONLY this JSON, no markdown fences:\n{\"category\":\"Sales|Support|Billing|Partnerships|Jobs|Others\",\"priority\":\"High|Medium|Low\",\"summary\":\"...\",\"draft_reply\":\"...\",\"confidence\":0.0,\"needs_review\":false}`;\n\nconst m = $input.first().json;\n\n// Prefer plain text; fall back to HTML stripped of tags; then snippet.\nlet body = m.text || '';\nif (!body && m.html) body = m.html.replace(/<style[\\s\\S]*?<\\/style>/gi, '').replace(/<[^>]+>/g, ' ');\nif (!body) body = m.snippet || '';\nbody = body.replace(/\\s+/g, ' ').trim().slice(0, 6000);\n\nconst from = m.From || m.from || '';\nconst subject = m.Subject || m.subject || '(no subject)';\n\nconst userMessage = `FROM: ${from}\\nSUBJECT: ${subject}\\nDATE: ${$now.setZone('Africa/Lagos').toFormat('cccc d LLLL yyyy, HH:mm')}\\n\\nBODY:\\n${body}`;\n\nreturn [{ json: {\n  emailId: m.id,\n  threadId: m.threadId,\n  from, subject, body,\n  request: {\n    system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },\n    contents: [{ role: 'user', parts: [{ text: userMessage }] }],\n    generationConfig: { response_mime_type: 'application/json', temperature: 0.2 }\n  }\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "5505b2b9-973a-4a2d-b364-fda43c22eb6b",
+      "name": "Prepare Email"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1betaX/models/gemini-3.8-flash:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "id": "7db2545c-c703-485f-bcea-77420cb8f336",
+      "name": "AI Classify",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "W38WETF6TGvoHCXP",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const VALID = ['Sales','Support','Billing','Partnerships','Jobs','Others'];\nconst src = $('Prepare Email').first().json;\nconst item = $input.first().json;\n\nlet r = {};\nlet parseError = '';\ntry {\n  const raw = item.candidates[0].content.parts[0].text;\n  r = JSON.parse(raw.replace(/```json|```/g, '').trim());\n} catch (e) {\n  parseError = 'AI returned unparseable output: ' + e.message;\n}\n\nconst category = VALID.includes(r.category) ? r.category : 'Others';\nconst priority = ['High','Medium','Low'].includes(r.priority) ? r.priority : 'Medium';\nconst confidence = Number(r.confidence);\nconst needsReview = Boolean(r.needs_review) || !(confidence >= 0.6) || !VALID.includes(r.category) || !!parseError;\n\nreturn [{ json: {\n  emailId: src.emailId,\n  threadId: src.threadId,\n  from: src.from,\n  subject: src.subject,\n  category, priority,\n  confidence: isNaN(confidence) ? 0 : confidence,\n  needsReview,\n  summary: r.summary || parseError || 'No summary produced.',\n  draftReply: r.draft_reply || '',\n  reviewReason: parseError || (!(confidence >= 0.6) ? 'Low confidence' : (r.needs_review ? 'Model flagged for review' : ''))\n} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "3547ff1b-d3cc-442e-8ab4-504848c4ecc8",
+      "name": "Parse AI Output"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "5d5f4f9e-c631-4811-9cee-d4da24d9010d",
+              "leftValue": "={{ $json.needsReview }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        896,
+        0
+      ],
+      "id": "a029d2e3-fe42-419c-a9e7-11c2b0641354",
+      "name": "Needs Review"
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Parse AI Output').item.json.emailId }}",
+        "labelIds": [
+          "Label_2645231598924770496"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1104,
+        -192
+      ],
+      "id": "37ae3829-2008-46f1-9a32-b54a196635aa",
+      "name": "Label Needs Review",
+      "webhookId": "f8f01c36-5e72-4a78-a60d-105a9a3f7043",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "Sales",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "64644d77-6f1d-42b8-b31c-cce6d3f92763"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Sales"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "id": "b88b6874-b592-4ae5-bc21-2f0c8957b93b",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "Support",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Support"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "id": "31d44201-1bee-471c-9d85-645e3575915c",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "Billing",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Billing"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "id": "7232ab7d-f775-4313-9339-f1814c248ef9",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "Partnerships",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Partnerships"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "id": "e26cdb7d-2447-46a6-8bc9-03950c103108",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "Jobs",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Jobs"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "id": "ec088b62-81b8-4398-b122-9c8f23ef80f4",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "Others",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Others"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": 5
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        1120,
+        96
+      ],
+      "id": "6aa5d2f8-45cf-4bcd-b97a-5643b2fc0b28",
+      "name": "Switch Category"
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "={{ $('Parse AI Output').item.json.subject }}",
+        "message": "={{ $('Parse AI Output').item.json.draftReply }}\n\n---\n[AI triage – delete before sending]\nCategory: {{ $('Parse AI Output').item.json.category }} | Priority: {{ $('Parse AI Output').item.json.priority }} | Confidence: {{ $('Parse AI Output').item.json.confidence }}\nSummary: {{ $('Parse AI Output').item.json.summary }}",
+        "options": {
+          "threadId": "={{ $('Parse AI Output').item.json.threadId }}",
+          "sendTo": "={{ $('Parse AI Output').item.json.from }}"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2464,
+        160
+      ],
+      "id": "8723102a-3a8f-4838-aa70-abeb3593d6d8",
+      "name": "Create Draft",
+      "webhookId": "d5a0ab12-08b0-4e3e-8094-646391c998c9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "={{ $('Parse AI Output').item.json.subject }}",
+        "message": "=This email could not be classified with confidence and needs a human decision.\n\nReason: {{ $('Parse AI Output').item.json.reviewReason }}\nFrom: {{ $('Parse AI Output').item.json.from }}\nBest guess: {{ $('Parse AI Output').item.json.category }} / {{ $('Parse AI Output').item.json.priority }} (confidence {{ $('Parse AI Output').item.json.confidence }})\n\nSummary: {{ $('Parse AI Output').item.json.summary }}\n\nSuggested reply (edit before sending):\n{{ $('Parse AI Output').item.json.draftReply }}",
+        "options": {
+          "threadId": "={{ $('Parse AI Output').item.json.threadId }}"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1344,
+        -192
+      ],
+      "id": "29e4b820-4120-4c4d-847c-5dac01b2cc49",
+      "name": "Review Draft",
+      "webhookId": "55dc7bcf-bbc0-4e22-b96a-fa009ef9f528",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Parse AI Output').item.json.emailId }}",
+        "labelIds": [
+          "Label_3779384903200949823"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1728,
+        -240
+      ],
+      "id": "f691b40c-5d16-453f-bd65-3ccce7b429f0",
+      "name": "Label Sales",
+      "webhookId": "159da686-c5d9-41ba-96d9-41dcb27cd840",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Parse AI Output').item.json.emailId }}",
+        "labelIds": [
+          "Label_7466201167746745934"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1840,
+        -64
+      ],
+      "id": "60387a86-79bc-469c-a35a-65e3611bdd3d",
+      "name": "Label Support",
+      "webhookId": "159da686-c5d9-41ba-96d9-41dcb27cd840",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Parse AI Output').item.json.emailId }}",
+        "labelIds": [
+          "Label_8176091915887936202"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1600,
+        48
+      ],
+      "id": "3caf45dd-740c-4891-bfec-42640250f1a4",
+      "name": "Label Billing",
+      "webhookId": "159da686-c5d9-41ba-96d9-41dcb27cd840",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Parse AI Output').item.json.emailId }}",
+        "labelIds": [
+          "Label_2598801187511591716"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1728,
+        304
+      ],
+      "id": "90e4394f-7871-4a99-b95f-f17e85342819",
+      "name": "Label Jobs",
+      "webhookId": "159da686-c5d9-41ba-96d9-41dcb27cd840",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Parse AI Output').item.json.emailId }}",
+        "labelIds": [
+          "Label_4819272967809652903"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1872,
+        160
+      ],
+      "id": "14361a83-a722-4256-aec8-61b5a7315481",
+      "name": "Label Partnerships",
+      "webhookId": "159da686-c5d9-41ba-96d9-41dcb27cd840",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "addLabels",
+        "messageId": "={{ $('Parse AI Output').item.json.emailId }}",
+        "labelIds": [
+          "Label_2753059922602235217"
+        ]
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1744,
+        480
+      ],
+      "id": "ed0e4a24-fb99-47fa-8131-0dec010b8b1e",
+      "name": "Label Others",
+      "webhookId": "159da686-c5d9-41ba-96d9-41dcb27cd840",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "7ca1Dx2WxMuVGcHW",
+          "name": "Gmail account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Email": {
+      "main": [
+        [
+          {
+            "node": "AI Classify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Classify": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Output": {
+      "main": [
+        [
+          {
+            "node": "Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Review": {
+      "main": [
+        [
+          {
+            "node": "Label Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Switch Category",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Needs Review": {
+      "main": [
+        [
+          {
+            "node": "Review Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Category": {
+      "main": [
+        [
+          {
+            "node": "Label Sales",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label Support",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label Billing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label Partnerships",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label Others",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Sales": {
+      "main": [
+        [
+          {
+            "node": "Create Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Support": {
+      "main": [
+        [
+          {
+            "node": "Create Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Billing": {
+      "main": [
+        [
+          {
+            "node": "Create Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Jobs": {
+      "main": [
+        [
+          {
+            "node": "Create Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Partnerships": {
+      "main": [
+        [
+          {
+            "node": "Create Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Others": {
+      "main": [
+        [
+          {
+            "node": "Create Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "sqKbKEhMRQDT0eg1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "0dc04a67-6e86-4d4d-9b53-fbb322c02234",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fe2004ab03178e55ac26497659754349c9e7d5ac4c3926e3adaad94f67783817"
+  },
+  "nodeGroups": [],
+  "id": "rVnnxMXonEWVq62M",
+  "tags": []
+}
