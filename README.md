@@ -17,4 +17,4 @@ AI-powered workflows built with n8n and Google Gemini during the Nexith AI Acade
 Credentials are stored in n8n, never in these files.
 
 ## Author
-Jude Mamah – Senior Commissioning & Start-Up Engineer, building automation and training tools for plant operations.
+Jude Mamah – Commissioning & Start-Up Specialist: building automation and training tools for plant operations.
